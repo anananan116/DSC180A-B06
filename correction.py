@@ -41,6 +41,17 @@ class MathResponse(pydantic.BaseModel):
   error_step: Optional[int]
   how_to_fix: Optional[str]
 
+# results takes in a list of dictionaries (ex: sample_output.json from zihan's part 1 section)
+# returns another json object of dictionaries following response_format specified above
+def get_corrections(results: list[dict], client: openai.OpenAI) -> list[dict]:
+  corrections = []
+  for result in results:
+    string_representation = "\n".join(result["steps"])
+    correction_string = check_math_answer(string_representation, client)
+    correction_json = json.loads(correction_string)
+    corrections.append(correction_json)
+  return corrections
+
 def check_math_answer(prompt: str, client: openai.OpenAI) -> MathResponse:
   completion = client.beta.chat.completions.parse(
     model="gpt-4o",
@@ -120,11 +131,4 @@ You are are helping a student solve a math problem. Don't give away the answer, 
 # print(check_math_answer_no_response_format(user_prompt_correct))
 # print(check_math_answer_no_response_format(user_prompt_incorrect))
 
-def get_corrections(results: list[dict], client: openai.OpenAI) -> list[dict]:
-  corrections = []
-  for result in results:
-    string_representation = "\n".join(result["steps"])
-    correction_string = check_math_answer(string_representation, client)
-    correction_json = json.loads(correction_string)
-    corrections.append(correction_json)
-  return corrections
+
