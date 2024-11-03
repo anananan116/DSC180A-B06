@@ -4,6 +4,11 @@ random.seed(42)
 from transformers import GenerationConfig, logging
 logging.set_verbosity_error()
 
+import json
+import openai
+from credentials import api_key
+from correction import *
+
 from inference import setup_model_and_tokenizer, do_initial_inference, save_results
 from data_utils import load_math_dataset
 
@@ -102,6 +107,15 @@ def main():
     initial_inference_results = do_initial_inference(model, tokenizer, config, sampled_problems)
     save_results(initial_inference_results, 'sample_output.json')
 
+
+    client = openai.OpenAI(api_key)
+    data = None
+    with open('sample_output.json') as f:
+        data = json.load(f)
+    results = data["results"]
+    corrections = get_corrections(results, client, verbose=True)
+    with open('corrections.json', 'w') as f:
+        json.dump(corrections, f)
 
 if __name__ == '__main__':
     main()
