@@ -34,14 +34,15 @@ step 3:
 
 from typing import Optional
 import pydantic
+import openai
 
 class MathResponse(pydantic.BaseModel):
   correct: bool
   error_step: Optional[int]
   how_to_fix: Optional[str]
 
-def check_math_answer(prompt: str) -> MathResponse:
-  completion = openai.beta.chat.completions.parse(
+def check_math_answer(prompt: str, client: openai.OpenAI) -> MathResponse:
+  completion = client.beta.chat.completions.parse(
     model="gpt-4o",
     messages=[
         {"role": "system", "content": "You are are helping a student solve a math problem. Don't give away the answer, but instead guide them. They will provide you with step by step reasoning for solving a problem, and if they made a mistake, it's your job to identify the first step where they made a mistake, and provide a hint to help them correct it. Do not outright give them the answer. If they are correct, return error_step and how_to_fix as null."},
@@ -59,8 +60,11 @@ def check_math_answer(prompt: str) -> MathResponse:
 import json
 import re
 
-def check_math_answer_no_response_format(prompt: str):
-    completion = openai.beta.chat.completions.parse(
+def get_oai_client(api_key: str) -> openai.OpenAI:
+   return openai.OpenAI(api_key=api_key)
+
+def check_math_answer_no_response_format(prompt: str, client: openai.OpenAI):
+    completion = client.beta.chat.completions.parse(
     model="gpt-4o",
     messages=[
         {"role": "system", "content": """
@@ -115,3 +119,12 @@ You are are helping a student solve a math problem. Don't give away the answer, 
 
 # print(check_math_answer_no_response_format(user_prompt_correct))
 # print(check_math_answer_no_response_format(user_prompt_incorrect))
+
+def get_corrections(results: list[dict], client: openai.OpenAI) -> list[dict]:
+  corrections = []
+  for result in results:
+    string_representation = "\n".join(result["steps"])
+    correction_string = check_math_answer(string_representation, client)
+    correction_json = json.loads(correction_string)
+    corrections.append(correction_json)
+  return corrections
