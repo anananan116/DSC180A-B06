@@ -1,8 +1,10 @@
 import openai
+from openai import OpenAI
 import os
-
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-client = openai.Client()
+from typing import Optional
+import pydantic
+import json
+import re
 
 
 user_prompt_correct = """
@@ -31,11 +33,6 @@ step 3:
 1700 + 20 = 1720
 """
 
-
-from typing import Optional
-import pydantic
-import openai
-
 class MathResponse(pydantic.BaseModel):
   correct: bool
   error_step: Optional[int]
@@ -43,11 +40,13 @@ class MathResponse(pydantic.BaseModel):
 
 # results takes in a list of dictionaries (ex: sample_output.json from zihan's part 1 section)
 # returns another json object of dictionaries following response_format specified above
-def get_corrections(results: list[dict], client: openai.OpenAI) -> list[dict]:
+def get_corrections(results: list[dict], client: openai.OpenAI, verbose: bool = False) -> list[dict]:
   corrections = []
   for result in results:
     string_representation = "\n".join(result["steps"])
     correction_string = check_math_answer(string_representation, client)
+    if verbose:
+       print(correction_string)
     correction_json = json.loads(correction_string)
     corrections.append(correction_json)
   return corrections
@@ -67,12 +66,6 @@ def check_math_answer(prompt: str, client: openai.OpenAI) -> MathResponse:
 
 # print(check_math_answer(user_prompt_correct))
 # print(check_math_answer(user_prompt_incorrect))
-
-import json
-import re
-
-def get_oai_client(api_key: str) -> openai.OpenAI:
-   return openai.OpenAI(api_key=api_key)
 
 def check_math_answer_no_response_format(prompt: str, client: openai.OpenAI):
     completion = client.beta.chat.completions.parse(
@@ -100,9 +93,8 @@ You are are helping a student solve a math problem. Don't give away the answer, 
 
 
 
-from openai import OpenAI
 
-def check_math_answer_aimlapi(user_prompt: str, model: str, api_key=str) -> str:
+def check_math_answer_aimlapi(user_prompt: str, model: str, client: openai.OpenAI) -> str:
 
     base_url = "https://api.aimlapi.com/v1"
     api_key = api_key # free tier api-key
@@ -115,8 +107,7 @@ You are are helping a student solve a math problem. Don't give away the answer, 
 }
 """
 
-    api = OpenAI(api_key=api_key, base_url=base_url)
-    completion = api.chat.completions.create(
+    completion = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
