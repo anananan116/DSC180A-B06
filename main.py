@@ -137,6 +137,10 @@ def main():
             client = openai.OpenAI(api_key=api_key, base_url=api_config['endpoint'])
             client_2 = openai.OpenAI(api_key=api_config['openai_api_key'])
             has_client_2 = True
+        elif api_config['model'] != "gpt-4o":
+            client = openai.OpenAI(api_key=api_key)
+            client_2 = openai.OpenAI(api_key=api_config['openai_api_key'])
+            has_client_2 = True
         else:
             client = openai.OpenAI(api_key=api_key)
             has_client_2 = False
