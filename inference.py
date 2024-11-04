@@ -6,11 +6,12 @@ from tqdm import tqdm
 from dataclasses import dataclass
 from transformers import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
+import re
 
 logging.set_verbosity_error()
 
-SYSTEM_PROMPT = """You are a precise mathematical problem solver. Follow these exact guidelines:
+SYSTEM_PROMPT_INITIAL = """You are a precise mathematical problem solver. Follow these exact guidelines:
 
 1. READ AND UNDERSTAND
 - Begin by restating the problem in your own words
@@ -46,13 +47,66 @@ Step 2: Divide both sides by 1000
 1.2 = (1.05)^t
 
 Step 3: Take natural log of both sides
-ln(1.2) = t × ln(1.05)
+ln(1.2) = t x ln(1.05)
 
 Step 4: Solve for t
 t = ln(1.2) ÷ ln(1.05)
 t = 3.74
 
 Solution: 3.74 years"""
+
+SYSTEM_PROMPT_CORRECTION = """You are a precise mathematical problem solver. Follow these exact guidelines:
+
+1. READ AND UNDERSTAND
+- Begin by acknowledging the previous attempt provided
+- The last step shown in the previous attempt is always the incorrect step
+- State which step you're starting from (the last step shown) and explain why it needs correction based on the feedback
+- List any additional information from the feedback that will help fix the solution
+
+2. SOLUTION FORMAT FOR CORRECTIONS
+- Start from the step number of the last step shown in the previous attempt
+- Begin with "Step n:" where n is the last step number shown
+- Show the corrected mathematical operations
+- Continue with subsequent steps as normal, incrementing the step number
+- Each step must start with "Step n:" on a new line
+- Provide clear explanation of what you're doing and why
+- Show all mathematical operations
+- Each step should be relatively short and focused
+- Even if you find an error in previous steps, continue to the end. Do not fix it and start again!
+- No matter what the feedback and the previous attempt is, you should always cotinue solving the problem following the given format and provide a final answer!
+
+3. FINAL ANSWER
+- Start with "Solution:" on a new line
+- Provide a concise answer with units if applicable
+- Still provide the answer even if you made a mistake in the steps, even if it's incorrect or not valid. NEVER start again!
+- No matter what the feedback and the previous attempt is, you should always cotinue solving the problem following the given format and provide a final answer!
+
+Example input:
+Problem: How long will it take for $1000 to grow to $1200 at 5% annual interest?
+
+Previous attempt:
+Step 1: Set up the equation
+1200 = 1000(1 + 0.05)^t
+
+Step 2: Divide both sides by 1000
+1.2 = (1.05)^t
+
+Step 3: Take natural log of both sides
+ln(1.2) = t + ln(1.05)
+
+Feedback: After taking log, the t should be multiplied by ln(1.05), not added.
+
+Example output:
+
+Step 3: Take natural log of both sides
+ln(1.2) = t x ln(1.05)
+
+Step 4: Solve for t
+t = ln(1.2) ÷ ln(1.05)
+t = 3.74
+
+Solution: 3.74 years
+"""
 
 def format_chat(
     user_prompt: str, 
@@ -209,20 +263,167 @@ def parse_solution_steps(solution_text) -> Dict:
         'solution': solution
     }
 
+def validate_solution_format(parsed_solution: Dict) -> Tuple[bool, str]:
+    """
+    Validate if the solution follows the expected format.
+    
+    Args:
+        parsed_solution (Dict): Dictionary containing 'steps' and 'solution'
+        
+    Returns:
+        Tuple[bool, str]: (is_valid, error_message)
+    """
+    if 'steps' not in parsed_solution or 'solution' not in parsed_solution:
+        return False, "Missing required sections: steps or solution"
+        
+    # Check if there are any steps
+    if not parsed_solution['steps']:
+        return False, "No steps found in solution"
+        
+    # Validate step format
+    step_pattern = re.compile(r'^Step \d+:', re.IGNORECASE)
+    
+    for step in parsed_solution['steps']:
+        if not step_pattern.match(step.strip()):
+            return False, f"Invalid step format: {step[:50]}..."
+            
+    # Validate solution format
+    if not parsed_solution['solution']:
+        return False, "Missing solution section"
+        
+    if not parsed_solution['solution'].startswith('Solution:'):
+        return False, "Solution section doesn't start with 'Solution:'"
+        
+    return True, "Valid format"
+
 def do_initial_inference(
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     config: GenerationConfig,
-    dataset: List[Dict]
+    dataset: List[Dict],
+    max_retries: int = 10
 ) -> List[Dict]:
-    """Run initial inference and return results."""
+    """Run initial inference with format validation and retries."""
+    # Initialize results list with None values to maintain order
+    final_results = [None] * len(dataset)
+    
+    # Process all problems in a batch
     prompts = []
-    for one_problem in dataset:
-        one_peompt = {}
-        one_peompt['system_prompt'] = SYSTEM_PROMPT
-        one_peompt['user_prompt'] = one_problem['problem']
-        prompts.append(one_peompt)
-    results = batch_inference(model, tokenizer, prompts, config)
-    generated = [x['generated_text'] for x in results]
-    results = [parse_solution_steps(x) for x in generated]
-    return results
+    for problem in dataset:
+        prompts.append({
+            'system_prompt': SYSTEM_PROMPT_INITIAL,
+            'user_prompt': problem['problem']
+        })
+    
+    # Run batch inference
+    batch_results = batch_inference(model, tokenizer, prompts, config)
+    
+    # Process each result and handle retries if needed
+    for idx, result in enumerate(batch_results):
+        attempt_count = 0
+        valid_result = None
+        
+        while attempt_count < max_retries and valid_result is None:
+            if attempt_count == 0:
+                # Use the initial batch result
+                current_result = result
+            else:
+                # Retry individually for invalid results
+                retry_prompt = prompts[idx]
+                current_result = batch_inference(model, tokenizer, [retry_prompt], config)[0]
+            
+            parsed_result = parse_solution_steps(current_result['generated_text'])
+            is_valid, error_msg = validate_solution_format(parsed_result)
+            
+            if is_valid:
+                valid_result = parsed_result
+            else:
+                attempt_count += 1
+                if attempt_count == max_retries:
+                    print(f"Warning: Maximum retries reached for problem {idx}. Last error: {error_msg}")
+                    valid_result = parsed_result  # Use last result even if invalid
+        
+        final_results[idx] = valid_result
+    
+    return final_results
+
+def do_correction_inference(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    config: GenerationConfig,
+    attempts: List[Dict],
+    corrections: List[Dict],
+    problems: List[Dict],
+    max_retries: int = 10
+) -> Tuple[List[Dict], List[Dict]]:
+    """Run correction inference with format validation and retries."""
+    # Initialize results list with None for problems needing correction
+    final_results = [None] * len(problems)
+    final_problems = []
+    correction_indices = []
+    
+    # Prepare prompts for problems needing correction
+    prompts = []
+    for idx, (attempt, correction, problem) in enumerate(zip(attempts, corrections, problems)):
+        if not correction['correct']:
+            user_prompt = (
+                f"Problem: {problem['problem']}\n\n"
+                "Previous attempt:\n"
+                f"{chr(10).join(attempt['steps'][:correction['error_step']])}\n\n"
+                f"Feedback: {correction['how_to_fix']}\n\n"
+            )
+            
+            prompts.append({
+                'system_prompt': SYSTEM_PROMPT_CORRECTION,
+                'user_prompt': user_prompt
+            })
+            correction_indices.append(idx)
+            final_problems.append(problem)
+    
+    if not prompts:  # No corrections needed
+        return [], []
+    
+    # Run batch inference for all corrections
+    batch_results = batch_inference(model, tokenizer, prompts, config)
+    
+    # Process each result and handle retries if needed
+    for prompt_idx, (result, original_idx) in enumerate(zip(batch_results, correction_indices)):
+        attempt_count = 0
+        valid_result = None
+        
+        while attempt_count < max_retries and valid_result is None:
+            if attempt_count == 0:
+                # Use the initial batch result
+                current_result = result
+            else:
+                # Retry individually for invalid results
+                retry_prompt = prompts[prompt_idx]
+                current_result = batch_inference(model, tokenizer, [retry_prompt], config)[0]
+            
+            parsed_result = parse_solution_steps(current_result['generated_text'])
+            is_valid, error_msg = validate_solution_format(parsed_result)
+            
+            if is_valid:
+                # Combine previous steps with new ones
+                parsed_result['steps'] = (
+                    attempts[original_idx]['steps'][:corrections[original_idx]['error_step']] + 
+                    parsed_result['steps']
+                )
+                valid_result = parsed_result
+            else:
+                attempt_count += 1
+                if attempt_count == max_retries:
+                    print(f"Warning: Maximum retries reached for correction {prompt_idx} (original problem {original_idx}). Last error: {error_msg}")
+                    # Combine steps even for invalid results
+                    parsed_result['steps'] = (
+                        attempts[original_idx]['steps'][:corrections[original_idx]['error_step']] + 
+                        parsed_result['steps']
+                    )
+                    valid_result = parsed_result
+        
+        final_results[original_idx] = valid_result
+    
+    # Filter out None values from final results (problems that didn't need correction)
+    final_results = [result for result in final_results if result is not None]
+    
+    return final_results, final_problems
