@@ -114,7 +114,6 @@ def parse_args():
 def main():
     args = parse_args()
     problems = load_math_dataset(args.data_path)
-    sampled_problems = random.sample(problems, args.sample_size)
     model, tokenizer = setup_model_and_tokenizer(args.model_name, args.device)
     if not os.path.exists('cache'):
         os.makedirs('cache')
@@ -132,6 +131,7 @@ def main():
         configs.append(api_config)
     
     for api_config in configs:
+        sampled_problems = random.sample(problems, args.sample_size)
         api_key = api_config['api_key']
         if 'endpoint' in api_config:
             client = openai.OpenAI(api_key=api_key, base_url=api_config['endpoint'])
