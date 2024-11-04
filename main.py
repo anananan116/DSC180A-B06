@@ -8,10 +8,11 @@ import os
 
 import json
 import openai
+import glob
 
 from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference, filter_fail_initial_inference
 from data_utils import load_math_dataset
-from reflextion import get_corrections, show_stats
+from reflextion import get_corrections, show_stats, get_corrections_from_two_models
 def parse_args():
     parser = argparse.ArgumentParser(description='Script configuration parameters')
     
@@ -104,7 +105,7 @@ def parse_args():
     parser.add_argument(
         '--reflexion_iters',
         type=int,
-        default=2,
+        default=3,
     )
     
     args = parser.parse_args()
@@ -115,45 +116,61 @@ def main():
     problems = load_math_dataset(args.data_path)
     sampled_problems = random.sample(problems, args.sample_size)
     model, tokenizer = setup_model_and_tokenizer(args.model_name, args.device)
-    api_config = args.api_config
     if not os.path.exists('cache'):
         os.makedirs('cache')
-    with open(api_config, 'r') as f:
-        api_config = yaml.safe_load(f)
-        
-    api_key = api_config['api_key']
-    if 'endpoint' in api_config:
-        client = openai.OpenAI(api_key=api_key, base_url=api_config['endpoint'])
+    
+    configs = []
+    api_config = args.api_config
+    if api_config == "all":
+        all_configs = glob.glob('config/*.yaml')
+        for config in all_configs:
+            with open(config, 'r') as f:
+                configs.append(yaml.safe_load(f))
     else:
-        client = openai.OpenAI(api_key=api_key)
+        with open(api_config, 'r') as f:
+            api_config = yaml.safe_load(f)
+        configs.append(api_config)
     
-    config = GenerationConfig(
-        max_tokens=args.max_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        batch_size=args.batch_size,
-        do_sample=not args.no_sample
-    )
-    if not os.path.exists(args.initial_inference):
-        initial_inference_results = do_initial_inference(model, tokenizer, config, sampled_problems)
-        save_results(initial_inference_results, args.initial_inference)
-    with open(args.initial_inference) as f:
-        initial_inference_results = json.load(f)
-    
-    inference_results = initial_inference_results["results"]
-    inference_results, sampled_problems = filter_fail_initial_inference(inference_results, sampled_problems)
-    
-    for i in range(args.reflexion_iters):
+    for api_config in configs:
+        api_key = api_config['api_key']
+        if 'endpoint' in api_config:
+            client = openai.OpenAI(api_key=api_key, base_url=api_config['endpoint'])
+            client_2 = openai.OpenAI(api_key=api_config['openai_api_key'])
+            has_client_2 = True
+        else:
+            client = openai.OpenAI(api_key=api_key)
+            has_client_2 = False
+        
+        config = GenerationConfig(
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            batch_size=args.batch_size,
+            do_sample=not args.no_sample
+        )
+        if not os.path.exists(args.initial_inference):
+            initial_inference_results = do_initial_inference(model, tokenizer, config, sampled_problems)
+            save_results(initial_inference_results, args.initial_inference)
+        with open(args.initial_inference) as f:
+            initial_inference_results = json.load(f)
+        
+        inference_results = initial_inference_results["results"]
+        inference_results, sampled_problems = filter_fail_initial_inference(inference_results, sampled_problems)
+        
+        for i in range(args.reflexion_iters):
+            if has_client_2:
+                corrections = get_corrections_from_two_models(inference_results, client, client_2, sampled_problems, model = api_config['model'])
+            else:
+                corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
+            show_stats(corrections, i)
+            save_results(corrections, f'cache/corrections_{i}.json')
+            corrected, problems = do_correction_inference(model, tokenizer, config, attempts=inference_results, corrections=corrections, problems=sampled_problems)
+            save_results(corrected, f'cache/corrected_{i}.json')
+            inference_results = corrected
+            sampled_problems = problems
+        
         corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
-        show_stats(corrections, i)
-        save_results(corrections, f'cache/corrections_{i}.json')
-        corrected, problems = do_correction_inference(model, tokenizer, config, attempts=inference_results, corrections=corrections, problems=sampled_problems)
-        save_results(corrected, f'cache/corrected_{i}.json')
-        inference_results = corrected
-        sampled_problems = problems
-    
-    corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
-    show_stats(corrections, args.reflexion_iters)
+        show_stats(corrections, args.reflexion_iters)
 
 if __name__ == '__main__':
     main()
