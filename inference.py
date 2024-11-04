@@ -277,22 +277,12 @@ def validate_solution_format(parsed_solution: Dict) -> Tuple[bool, str]:
         return False, "Missing required sections: steps or solution"
         
     # Check if there are any steps
-    if not parsed_solution['steps']:
+    if len(parsed_solution['steps']) == 0 or len(parsed_solution['steps']) == 1:
         return False, "No steps found in solution"
-        
-    # Validate step format
-    step_pattern = re.compile(r'^Step \d+:', re.IGNORECASE)
-    
-    for step in parsed_solution['steps']:
-        if not step_pattern.match(step.strip()):
-            return False, f"Invalid step format: {step[:50]}..."
             
     # Validate solution format
     if not parsed_solution['solution']:
         return False, "Missing solution section"
-        
-    if not parsed_solution['solution'].startswith('Solution:'):
-        return False, "Solution section doesn't start with 'Solution:'"
         
     return True, "Valid format"
 
@@ -301,7 +291,7 @@ def do_initial_inference(
     tokenizer: AutoTokenizer,
     config: GenerationConfig,
     dataset: List[Dict],
-    max_retries: int = 10
+    max_retries: int = 5
 ) -> List[Dict]:
     """Run initial inference with format validation and retries."""
     # Initialize results list with None values to maintain order
@@ -354,7 +344,7 @@ def do_correction_inference(
     attempts: List[Dict],
     corrections: List[Dict],
     problems: List[Dict],
-    max_retries: int = 10
+    max_retries: int = 5
 ) -> Tuple[List[Dict], List[Dict]]:
     """Run correction inference with format validation and retries."""
     # Initialize results list with None for problems needing correction
@@ -415,10 +405,7 @@ def do_correction_inference(
                 if attempt_count == max_retries:
                     print(f"Warning: Maximum retries reached for correction {prompt_idx} (original problem {original_idx}). Last error: {error_msg}")
                     # Combine steps even for invalid results
-                    parsed_result['steps'] = (
-                        attempts[original_idx]['steps'][:corrections[original_idx]['error_step']] + 
-                        parsed_result['steps']
-                    )
+                    parsed_result['steps'] = attempts[original_idx]['steps'][:corrections[original_idx]['error_step']] + parsed_result['steps']
                     valid_result = parsed_result
         
         final_results[original_idx] = valid_result
