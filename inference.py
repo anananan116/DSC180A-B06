@@ -74,6 +74,7 @@ SYSTEM_PROMPT_CORRECTION = """You are a precise mathematical problem solver. Fol
 - Each step should be relatively short and focused
 - Even if you find an error in previous steps, continue to the end. Do not fix it and start again!
 - No matter what the feedback and the previous attempt is, you should always cotinue solving the problem following the given format and provide a final answer!
+- Do not repeat the original wrong step in the corrected solution. Simply start from the corrected step.
 
 3. FINAL ANSWER
 - Start with "Solution:" on a new line
@@ -291,7 +292,7 @@ def do_initial_inference(
     tokenizer: AutoTokenizer,
     config: GenerationConfig,
     dataset: List[Dict],
-    max_retries: int = 5
+    max_retries: int = 3
 ) -> List[Dict]:
     """Run initial inference with format validation and retries."""
     # Initialize results list with None values to maintain order
@@ -319,6 +320,7 @@ def do_initial_inference(
                 current_result = result
             else:
                 # Retry individually for invalid results
+                print(f"Retrying initial generation: problem {idx}")
                 retry_prompt = prompts[idx]
                 current_result = batch_inference(model, tokenizer, [retry_prompt], config)[0]
             
@@ -331,7 +333,8 @@ def do_initial_inference(
                 attempt_count += 1
                 if attempt_count == max_retries:
                     print(f"Warning: Maximum retries reached for problem {idx}. Last error: {error_msg}")
-                    valid_result = parsed_result  # Use last result even if invalid
+                    print(f"This row of the dataset will be dropped.")
+                    valid_result = None
         
         final_results[idx] = valid_result
     
@@ -344,7 +347,7 @@ def do_correction_inference(
     attempts: List[Dict],
     corrections: List[Dict],
     problems: List[Dict],
-    max_retries: int = 5
+    max_retries: int = 3
 ) -> Tuple[List[Dict], List[Dict]]:
     """Run correction inference with format validation and retries."""
     # Initialize results list with None for problems needing correction
@@ -387,6 +390,7 @@ def do_correction_inference(
                 current_result = result
             else:
                 # Retry individually for invalid results
+                print(f"Retrying correction: {prompt_idx} (original problem {original_idx})")
                 retry_prompt = prompts[prompt_idx]
                 current_result = batch_inference(model, tokenizer, [retry_prompt], config)[0]
             
@@ -396,7 +400,7 @@ def do_correction_inference(
             if is_valid:
                 # Combine previous steps with new ones
                 parsed_result['steps'] = (
-                    attempts[original_idx]['steps'][:corrections[original_idx]['error_step']] + 
+                    attempts[original_idx]['steps'][:corrections[original_idx]['error_step'] - 1] + 
                     parsed_result['steps']
                 )
                 valid_result = parsed_result
@@ -405,7 +409,7 @@ def do_correction_inference(
                 if attempt_count == max_retries:
                     print(f"Warning: Maximum retries reached for correction {prompt_idx} (original problem {original_idx}). Last error: {error_msg}")
                     # Combine steps even for invalid results
-                    parsed_result['steps'] = attempts[original_idx]['steps'][:corrections[original_idx]['error_step']] + parsed_result['steps']
+                    parsed_result['steps'] = attempts[original_idx]['steps'][:corrections[original_idx]['error_step']]
                     valid_result = parsed_result
         
         final_results[original_idx] = valid_result
@@ -414,3 +418,14 @@ def do_correction_inference(
     final_results = [result for result in final_results if result is not None]
     
     return final_results, final_problems
+
+def filter_fail_initial_inference(results: List[Dict], problems: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    """Filter out failed initial inference results."""
+    valid_results = []
+    valid_problems = []
+    for result, problem in zip(results, problems):
+        if result is not None:
+            valid_results.append(result)
+            valid_problems.append(problem)
+    print(f"Filtered out {len(results) - len(valid_results)} failed initial inference results.")
+    return valid_results, valid_problems

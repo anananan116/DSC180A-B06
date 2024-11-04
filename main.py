@@ -9,7 +9,7 @@ import os
 import json
 import openai
 
-from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference
+from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference, filter_fail_initial_inference
 from data_utils import load_math_dataset
 from reflextion import get_corrections, show_stats
 def parse_args():
@@ -141,6 +141,7 @@ def main():
         initial_inference_results = json.load(f)
     
     inference_results = initial_inference_results["results"]
+    inference_results, sampled_problems = filter_fail_initial_inference(inference_results, sampled_problems)
     
     for i in range(args.reflexion_iters):
         corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])

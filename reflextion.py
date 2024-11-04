@@ -94,7 +94,6 @@ def check_math_answer(user_prompt: str, model: str, client: openai.OpenAI) -> Co
             return validated_response
             
         except (json.decoder.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
-            print(f"Attempt {retry_count + 1} failed: {str(e)}")
             retry_count += 1
             if retry_count == max_retries:
                 # Return a default error response if all retries fail
