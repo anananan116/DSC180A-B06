@@ -4,10 +4,10 @@ import random
 random.seed(42)
 from transformers import GenerationConfig, logging
 logging.set_verbosity_error()
+import os
 
 import json
 import openai
-from correction import *
 
 from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference
 from data_utils import load_math_dataset
