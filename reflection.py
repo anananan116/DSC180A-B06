@@ -255,6 +255,7 @@ def show_stats(corrections: list[dict], iter: int = 0, model: str = "gpt-4o"):
     report += f"Correct solutions: {correct_count}\n"
     report += f"Incorrect solutions: {incorrect_count}\n"
     print(report)
+    model = model.replace("/", "_")
     if not os.path.exists(f"reports/{model}_summary.txt"):
         with open(f"reports/{model}_summary.txt", "w") as f:
             f.write(report)
@@ -271,6 +272,7 @@ def show_stats_two_models(corrections: list[dict], corrections_2: list[dict], it
     correct_count_2 = sum(1 for c in correctness_2 if c)
     incorrect_count = total_problems - correct_count
     mismatch_count = sum(1 for c1, c2 in zip(correctness_1, correctness_2) if (c1 != c2))
+    mismatch_passthrough = sum(1 for c1, c2 in zip(correctness_1, correctness_2) if (c1 and (not c2)))
     
     report = f"Round {iter} Summary for {model}:\n"
     report += f"Total problems: {total_problems}\n"
@@ -278,7 +280,9 @@ def show_stats_two_models(corrections: list[dict], corrections_2: list[dict], it
     report += f"Incorrect solutions (Model 1): {incorrect_count}\n"
     report += f"Correct solutions (Model 2): {correct_count_2}\n"
     report += f"Mismatched solutions: {mismatch_count}\n"
+    report += f"Mismatched solutions leaved behind: {mismatch_passthrough}\n"
     print(report)
+    model = model.replace("/", "_")
     if not os.path.exists(f"reports/{model}_summary.txt"):
         with open(f"reports/{model}_summary.txt", "w") as f:
             f.write(report)
