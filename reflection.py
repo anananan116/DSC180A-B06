@@ -19,8 +19,6 @@ When determining whether the student's solution is correct, consider the followi
 - Each step should be written clearly and legibly
 - The overall solution should be correct
 
-
-
 Please first provide a step-by-step check of the student's solution. When you identify an error or confirm the solution is correct, provide the feedback. When providing feedback, please consider the following:
 - Clearly identify the step number where the error occurred
 - Provide a clear and concise explanation of the error
@@ -257,8 +255,12 @@ def show_stats(corrections: list[dict], iter: int = 0, model: str = "gpt-4o"):
     report += f"Correct solutions: {correct_count}\n"
     report += f"Incorrect solutions: {incorrect_count}\n"
     print(report)
-    with open(f"reports/{model}_summary.txt", "a") as f:
-        f.write(report)
+    if not os.path.exists(f"reports/{model}_summary.txt"):
+        with open(f"reports/{model}_summary.txt", "w") as f:
+            f.write(report)
+    else:
+        with open(f"reports/{model}_summary.txt", "a") as f:
+            f.write(report)
     return report
 
 def show_stats_two_models(corrections: list[dict], corrections_2: list[dict], iter: int = 0, model: str = "gpt-4o"):
@@ -277,6 +279,10 @@ def show_stats_two_models(corrections: list[dict], corrections_2: list[dict], it
     report += f"Correct solutions (Model 2): {correct_count_2}\n"
     report += f"Mismatched solutions: {mismatch_count}\n"
     print(report)
-    with open(f"reports/{model}_summary.txt", "a") as f:
-        f.write(report)
+    if not os.path.exists(f"reports/{model}_summary.txt"):
+        with open(f"reports/{model}_summary.txt", "w") as f:
+            f.write(report)
+    else:
+        with open(f"reports/{model}_summary.txt", "a") as f:
+            f.write(report)
     return report
