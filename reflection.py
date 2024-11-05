@@ -18,12 +18,8 @@ When determining whether the student's solution is correct, consider the followi
 - Each step should be written clearly and legibly
 - The overall solution should be correct
 
-Sample Output Format:
-[Step-by-step check to student's solution]
+Please first provide a step-by-step check of the student's solution. When you identify an error or confirm the solution is correct, provide the feedback in a new line with the following format:
 
-[Assert if the student's solution is correct or not, point out the first incorrect step, and provide a hint to correct it]
-
-Result:
 {
     "correct": "bool",
     "error_step": "int",

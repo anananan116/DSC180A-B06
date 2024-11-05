@@ -12,7 +12,8 @@ import glob
 
 from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference, filter_fail_initial_inference
 from data_utils import load_math_dataset
-from reflextion import get_corrections, show_stats, get_corrections_from_two_models, show_stats_two_models
+from reflection import get_corrections, show_stats, get_corrections_from_two_models, show_stats_two_models
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Script configuration parameters')
     
