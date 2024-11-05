@@ -73,7 +73,7 @@ def get_corrections(results: list[dict], client: openai.OpenAI, problems: list[d
     
     corrections = []
     # Use ThreadPoolExecutor for concurrent API calls
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=128) as executor:
         # Create future objects for all tasks
         future_to_task = {executor.submit(process_single_correction, args): args for args in task_args}
         
@@ -161,6 +161,52 @@ def validate_json_response(json_data: dict) -> CorrectionResponse:
     except pydantic.ValidationError as e:
         raise ValueError(f"Invalid JSON structure: {str(e)}")
 
+def find_json_in_text(text: str) -> Optional[str]:
+    """
+    Find JSON object in text containing LaTeX equations by using a state machine approach.
+    This handles nested braces and ignores LaTeX equation blocks.
+    """
+    in_latex = False
+    brace_count = 0
+    start_pos = -1
+    escape_next = False
+    
+    for i, char in enumerate(text):
+        # Handle LaTeX equation markers
+        if char == '$' and not escape_next:
+            in_latex = not in_latex
+            continue
+            
+        # Skip processing if we're inside a LaTeX equation
+        if in_latex:
+            continue
+            
+        # Handle escape characters
+        if char == '\\':
+            escape_next = not escape_next
+            continue
+        escape_next = False
+        
+        # Track JSON structure
+        if char == '{' and not in_latex:
+            if brace_count == 0:
+                start_pos = i
+            brace_count += 1
+        elif char == '}' and not in_latex:
+            brace_count -= 1
+            if brace_count == 0 and start_pos != -1:
+                # Found a potential complete JSON object
+                candidate = text[start_pos:i+1]
+                try:
+                    # Verify it's valid JSON
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    # Reset and continue searching
+                    start_pos = -1
+                    
+    return None
+
 def check_math_answer(user_prompt: str, model: str, client: openai.OpenAI) -> CorrectionResponse:
     max_retries = 3
     retry_count = 0
@@ -176,22 +222,24 @@ def check_math_answer(user_prompt: str, model: str, client: openai.OpenAI) -> Co
             )
 
             json_full_string = completion.choices[0].message.content
-            json_string = re.search(r"\{[^{}]*\}", json_full_string)
+            json_string = find_json_in_text(json_full_string)
+            
             if not json_string:
                 raise ValueError("No JSON object found in response")
             
-            json_loaded = json.loads(json_string.group())
+            json_loaded = json.loads(json_string)
             validated_response = validate_json_response(json_loaded)
             return validated_response
             
         except (json.decoder.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             retry_count += 1
             if retry_count == max_retries:
-                return {
-                    "correct": False,
-                    "error_step": 1,
-                    "how_to_fix": "Unable to parse response from model"
-                }
+                return CorrectionResponse(
+                    correct=False,
+                    error_step=1,
+                    how_to_fix="Unable to parse response from model"
+                )
+
 def show_stats(corrections: list[dict], iter: int = 0, model: str = "gpt-4o"):
     total_problems = len(corrections)
     correct_count = sum(1 for c in corrections if c["correct"])
