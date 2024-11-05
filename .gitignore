@@ -162,4 +162,5 @@ cython_debug/
 #.idea/
 data/
 temp.ipynb
+config/
 cache/
