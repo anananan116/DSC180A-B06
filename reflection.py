@@ -19,7 +19,14 @@ When determining whether the student's solution is correct, consider the followi
 - Each step should be written clearly and legibly
 - The overall solution should be correct
 
-Please first provide a step-by-step check of the student's solution. When you identify an error or confirm the solution is correct, provide the feedback in a new line with the following format:
+
+
+Please first provide a step-by-step check of the student's solution. When you identify an error or confirm the solution is correct, provide the feedback. When providing feedback, please consider the following:
+- Clearly identify the step number where the error occurred
+- Provide a clear and concise explanation of the error
+- Provide a hint to help the student correct the error
+- DO NOT provide the correct solution to the problem, only hints to help the student correct their mistake
+- Follow the following format in to provide the feedback in the end of your response:
 
 {
     "correct": "bool",
