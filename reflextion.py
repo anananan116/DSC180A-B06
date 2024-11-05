@@ -71,8 +71,9 @@ def get_corrections(results: list[dict], client: openai.OpenAI, problems: list[d
         corrections.append(correction_json)
     return corrections
 
-def get_corrections_from_two_models(results: list[dict], client: openai.OpenAI, client_2:openai.OpenAI, problems: list[dict], model: str) -> list[dict]:
+def get_corrections_from_two_models(results: list[dict], client: openai.OpenAI, client_2:openai.OpenAI, problems: list[dict], model: str) -> tuple[list[dict]]:
     corrections = []
+    corrections_2 = []
     for result, problem in tqdm(zip(results, problems), total=len(results)):
         problem_text = problem["problem"]
         solution = problem["solution"]
@@ -83,10 +84,9 @@ def get_corrections_from_two_models(results: list[dict], client: openai.OpenAI, 
         user_prompt = problem_prompt + student_solution
         correction_json = check_math_answer(user_prompt, model, client)
         correction_json_2 = check_math_answer(user_prompt, "gpt-4o", client_2)
-        # We explicitly override the decision by the first model by GPT-4o's decision for fiar comparison
-        correction_json["correct"] = correction_json_2["correct"]
+        corrections_2.append(correction_json_2)
         corrections.append(correction_json)
-    return corrections
+    return corrections, corrections_2
 
 def validate_json_response(json_data: dict) -> CorrectionResponse:
     try:
@@ -130,14 +130,36 @@ def check_math_answer(user_prompt: str, model: str, client: openai.OpenAI) -> Co
                     "how_to_fix": "Unable to parse response from model"
                 }
 
-def show_stats(corrections: list[dict], iter: int = 0):
+def show_stats(corrections: list[dict], iter: int = 0, model: str = "gpt-4o"):
     total_problems = len(corrections)
     correct_count = sum(1 for c in corrections if c["correct"])
     incorrect_count = total_problems - correct_count
 
-    print(f"\nIteration {iter} Summary:")
-    print(f"Total problems: {total_problems}")
-    print(f"Correct solutions: {correct_count}")
-    print(f"Incorrect solutions: {incorrect_count}")
+    report = f"Round {iter} Summary for {model}:\n"
+    report += f"Total problems: {total_problems}\n"
+    report += f"Correct solutions: {correct_count}\n"
+    report += f"Incorrect solutions: {incorrect_count}\n"
+    print(report)
+    with open(f"{model}_summary.txt", "a") as f:
+        f.write(report)
+    return report
+
+def show_stats_two_models(corrections: list[dict], corrections_2: list[dict], iter: int = 0, model: str = "gpt-4o"):
+    correctness_1 = [c["correct"] for c in corrections]
+    correctness_2 = [c["correct"] for c in corrections_2]
+    total_problems = len(corrections)
+    correct_count = sum(1 for c in correctness_1 if c)
+    correct_count_2 = sum(1 for c in correctness_2 if c)
+    incorrect_count = total_problems - correct_count
+    mismatch_count = sum(1 for c1, c2 in zip(correctness_1, correctness_2) if (c1 != c2))
     
-    return correct_count, incorrect_count
+    report = f"Round {iter} Summary for {model}:\n"
+    report += f"Total problems: {total_problems}\n"
+    report += f"Correct solutions (Model 1): {correct_count}\n"
+    report += f"Incorrect solutions (Model 1): {incorrect_count}\n"
+    report += f"Correct solutions (Model 2): {correct_count_2}\n"
+    report += f"Mismatched solutions: {mismatch_count}\n"
+    print(report)
+    with open(f"{model}_summary.txt", "a") as f:
+        f.write(report)
+    return report

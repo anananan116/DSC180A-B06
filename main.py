@@ -12,7 +12,7 @@ import glob
 
 from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference, filter_fail_initial_inference
 from data_utils import load_math_dataset
-from reflextion import get_corrections, show_stats, get_corrections_from_two_models
+from reflextion import get_corrections, show_stats, get_corrections_from_two_models, show_stats_two_models
 def parse_args():
     parser = argparse.ArgumentParser(description='Script configuration parameters')
     
@@ -163,10 +163,11 @@ def main():
         
         for i in range(args.reflexion_iters):
             if has_client_2:
-                corrections = get_corrections_from_two_models(inference_results, client, client_2, sampled_problems, model = api_config['model'])
+                corrections, corrections_2 = get_corrections_from_two_models(inference_results, client, client_2, sampled_problems, model = api_config['model'])
+                report = show_stats_two_models(corrections, corrections_2, i, api_config['model'])
             else:
                 corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
-            show_stats(corrections, i)
+                report = show_stats(corrections, i, api_config['model'])
             save_results(corrections, f'cache/corrections_{i}.json')
             corrected, problems = do_correction_inference(model, tokenizer, config, attempts=inference_results, corrections=corrections, problems=sampled_problems)
             save_results(corrected, f'cache/corrected_{i}.json')
