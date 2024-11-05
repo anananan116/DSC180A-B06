@@ -117,7 +117,7 @@ def main():
     model, tokenizer = setup_model_and_tokenizer(args.model_name, args.device)
     if not os.path.exists('cache'):
         os.makedirs('cache')
-    
+    initial_sampled_dataset = random.sample(problems, args.sample_size)
     configs = []
     api_config = args.api_config
     if api_config == "all":
@@ -131,7 +131,7 @@ def main():
         configs.append(api_config)
     
     for api_config in configs:
-        sampled_problems = random.sample(problems, args.sample_size)
+        sampled_problems = initial_sampled_dataset
         api_key = api_config['api_key']
         if 'endpoint' in api_config:
             client = openai.OpenAI(api_key=api_key, base_url=api_config['endpoint'])
