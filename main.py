@@ -118,6 +118,8 @@ def main():
     model, tokenizer = setup_model_and_tokenizer(args.model_name, args.device)
     if not os.path.exists('cache'):
         os.makedirs('cache')
+    if not os.path.exists('reports'):
+        os.makedirs('reports')
     initial_sampled_dataset = random.sample(problems, args.sample_size)
     configs = []
     api_config = args.api_config

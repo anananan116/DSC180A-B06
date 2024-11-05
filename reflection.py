@@ -5,6 +5,7 @@ import pydantic
 import json
 import re
 from tqdm import tqdm
+import concurrent.futures
 
 SYSTEM_PROMPT = """
 You will be given a math problem, the correct solution and the solution provided by a student. 
@@ -53,40 +54,108 @@ class ResponseValidator(pydantic.BaseModel):
             raise ValueError("how_to_fix must be None when correct is True")
         return v
 
-def get_corrections(results: list[dict], client: openai.OpenAI, problems: list[dict], model: str) -> list[dict]:
-    corrections = []
-    for result, problem in tqdm(zip(results, problems), total=len(results)):
-        problem_text = problem["problem"]
-        solution = problem["solution"]
-        problem_prompt = f"Problem: {problem_text}\n\nCorrect Solution: {solution}\n\nStudent's Solution:\n"
-        if result["solution"] is None:
-            result["solution"] = "null"
-        student_solution = "\n".join(result["steps"]) + "\n" + result["solution"]
-        user_prompt = problem_prompt + student_solution
-        correction_json = check_math_answer(user_prompt, model, client)
-        corrections.append(correction_json)
-    return corrections
+def process_single_correction(args: tuple) -> CorrectionResponse:
+    result, problem, model, client = args
+    problem_text = problem["problem"]
+    solution = problem["solution"]
+    problem_prompt = f"Problem: {problem_text}\n\nCorrect Solution: {solution}\n\nStudent's Solution:\n"
+    
+    if result["solution"] is None:
+        result["solution"] = "null"
+    
+    student_solution = "\n".join(result["steps"]) + "\n" + result["solution"]
+    user_prompt = problem_prompt + student_solution
+    return check_math_answer(user_prompt, model, client)
 
-def get_corrections_from_two_models(results: list[dict], client: openai.OpenAI, client_2:openai.OpenAI, problems: list[dict], model: str) -> tuple[list[dict]]:
+def get_corrections(results: list[dict], client: openai.OpenAI, problems: list[dict], model: str) -> list[dict]:
+    # Create arguments for each task
+    task_args = [(result, problem, model, client) for result, problem in zip(results, problems)]
+    
     corrections = []
+    # Use ThreadPoolExecutor for concurrent API calls
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Create future objects for all tasks
+        future_to_task = {executor.submit(process_single_correction, args): args for args in task_args}
+        
+        # Use tqdm to show progress
+        for future in tqdm(concurrent.futures.as_completed(future_to_task), total=len(task_args)):
+            try:
+                correction = future.result()
+                corrections.append(correction)
+            except Exception as e:
+                # Handle any errors and append a default error response
+                corrections.append({
+                    "correct": False,
+                    "error_step": 1,
+                    "how_to_fix": f"Error processing correction: {str(e)}"
+                })
+    
+    # Sort corrections back into original order
+    sorted_corrections = [None] * len(results)
+    for idx, (future, args) in enumerate(future_to_task.items()):
+        original_idx = task_args.index(args)
+        sorted_corrections[original_idx] = corrections[idx]
+    
+    return sorted_corrections
+
+def get_corrections_from_two_models(
+    results: list[dict],
+    client: openai.OpenAI,
+    client_2: openai.OpenAI,
+    problems: list[dict],
+    model: str
+) -> tuple[list[dict]]:
+    # Create arguments for each task for both models
+    task_args_1 = [(result, problem, model, client) for result, problem in zip(results, problems)]
+    task_args_2 = [(result, problem, "gpt-4o", client_2) for result, problem in zip(results, problems)]
+    
+    corrections_1 = []
     corrections_2 = []
-    for result, problem in tqdm(zip(results, problems), total=len(results)):
-        problem_text = problem["problem"]
-        solution = problem["solution"]
-        problem_prompt = f"Problem: {problem_text}\n\nCorrect Solution: {solution}\n\nStudent's Solution:\n"
-        if result["solution"] is None:
-            result["solution"] = "null"
-        student_solution = "\n".join(result["steps"]) + "\n" + result["solution"]
-        user_prompt = problem_prompt + student_solution
-        correction_json = check_math_answer(user_prompt, model, client)
-        correction_json_2 = check_math_answer(user_prompt, "gpt-4o", client_2)
-        corrections_2.append(correction_json_2)
-        corrections.append(correction_json)
-    return corrections, corrections_2
+    
+    # Use ThreadPoolExecutor for concurrent API calls
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        # Submit all tasks for both models
+        future_to_task_1 = {executor.submit(process_single_correction, args): args for args in task_args_1}
+        future_to_task_2 = {executor.submit(process_single_correction, args): args for args in task_args_2}
+        
+        # Combine all futures for progress tracking
+        all_futures = list(future_to_task_1.keys()) + list(future_to_task_2.keys())
+        
+        # Use tqdm to show progress
+        for future in tqdm(concurrent.futures.as_completed(all_futures), total=len(all_futures)):
+            try:
+                correction = future.result()
+                if future in future_to_task_1:
+                    corrections_1.append(correction)
+                else:
+                    corrections_2.append(correction)
+            except Exception as e:
+                error_response = {
+                    "correct": False,
+                    "error_step": 1,
+                    "how_to_fix": f"Error processing correction: {str(e)}"
+                }
+                if future in future_to_task_1:
+                    corrections_1.append(error_response)
+                else:
+                    corrections_2.append(error_response)
+    
+    # Sort corrections back into original order
+    sorted_corrections_1 = [None] * len(results)
+    sorted_corrections_2 = [None] * len(results)
+    
+    for idx, (future, args) in enumerate(future_to_task_1.items()):
+        original_idx = task_args_1.index(args)
+        sorted_corrections_1[original_idx] = corrections_1[idx]
+        
+    for idx, (future, args) in enumerate(future_to_task_2.items()):
+        original_idx = task_args_2.index(args)
+        sorted_corrections_2[original_idx] = corrections_2[idx]
+    
+    return sorted_corrections_1, sorted_corrections_2
 
 def validate_json_response(json_data: dict) -> CorrectionResponse:
     try:
-        # Validate using pydantic model
         validated_data = ResponseValidator(**json_data)
         return validated_data.dict()
     except pydantic.ValidationError as e:
@@ -112,20 +181,17 @@ def check_math_answer(user_prompt: str, model: str, client: openai.OpenAI) -> Co
                 raise ValueError("No JSON object found in response")
             
             json_loaded = json.loads(json_string.group())
-            # Validate JSON structure and types
             validated_response = validate_json_response(json_loaded)
             return validated_response
             
         except (json.decoder.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             retry_count += 1
             if retry_count == max_retries:
-                # Return a default error response if all retries fail
                 return {
                     "correct": False,
                     "error_step": 1,
                     "how_to_fix": "Unable to parse response from model"
                 }
-
 def show_stats(corrections: list[dict], iter: int = 0, model: str = "gpt-4o"):
     total_problems = len(corrections)
     correct_count = sum(1 for c in corrections if c["correct"])
@@ -136,7 +202,7 @@ def show_stats(corrections: list[dict], iter: int = 0, model: str = "gpt-4o"):
     report += f"Correct solutions: {correct_count}\n"
     report += f"Incorrect solutions: {incorrect_count}\n"
     print(report)
-    with open(f"{model}_summary.txt", "a") as f:
+    with open(f"reports/{model}_summary.txt", "a") as f:
         f.write(report)
     return report
 
@@ -156,6 +222,6 @@ def show_stats_two_models(corrections: list[dict], corrections_2: list[dict], it
     report += f"Correct solutions (Model 2): {correct_count_2}\n"
     report += f"Mismatched solutions: {mismatch_count}\n"
     print(report)
-    with open(f"{model}_summary.txt", "a") as f:
+    with open(f"reports/{model}_summary.txt", "a") as f:
         f.write(report)
     return report
