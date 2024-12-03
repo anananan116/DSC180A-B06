@@ -169,7 +169,7 @@ def main():
             sampled_problems = problems
         
         corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
-        show_stats(corrections, currect_solutions, original_problems, i, api_config['model'])
+        show_stats(corrections, currect_solutions, original_problems, args.reflexion_iters, api_config['model'])
 
 if __name__ == '__main__':
     main()
