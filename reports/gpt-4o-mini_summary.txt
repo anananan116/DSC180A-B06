@@ -1,0 +1,24 @@
+Round 0 Summary for gpt-4o-mini:
+Total problems: 500
+Correct solutions: 71
+Incorrect solutions: 429
+=============================
+Total correct solutions by Dart: 123
+Round 1 Summary for gpt-4o-mini:
+Total problems: 429
+Correct solutions: 142
+Incorrect solutions: 287
+=============================
+Total correct solutions by Dart: 276
+Round 2 Summary for gpt-4o-mini:
+Total problems: 287
+Correct solutions: 114
+Incorrect solutions: 173
+=============================
+Total correct solutions by Dart: 284
+Round 172 Summary for gpt-4o-mini:
+Total problems: 173
+Correct solutions: 66
+Incorrect solutions: 107
+=============================
+Total correct solutions by Dart: 290

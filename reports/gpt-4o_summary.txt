@@ -1,0 +1,24 @@
+Round 0 Summary for gpt-4o:
+Total problems: 500
+Correct solutions: 112
+Incorrect solutions: 388
+=============================
+Total correct solutions by Dart: 123
+Round 1 Summary for gpt-4o:
+Total problems: 388
+Correct solutions: 237
+Incorrect solutions: 151
+=============================
+Total correct solutions by Dart: 278
+Round 2 Summary for gpt-4o:
+Total problems: 151
+Correct solutions: 100
+Incorrect solutions: 51
+=============================
+Total correct solutions by Dart: 288
+Round 50 Summary for gpt-4o:
+Total problems: 51
+Correct solutions: 36
+Incorrect solutions: 15
+=============================
+Total correct solutions by Dart: 285

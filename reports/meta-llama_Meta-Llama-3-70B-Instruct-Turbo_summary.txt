@@ -1,0 +1,24 @@
+Round 0 Summary for meta-llama/Meta-Llama-3-70B-Instruct-Turbo:
+Total problems: 500
+Correct solutions: 105
+Incorrect solutions: 395
+=============================
+Total correct solutions by Dart: 123
+Round 1 Summary for meta-llama/Meta-Llama-3-70B-Instruct-Turbo:
+Total problems: 395
+Correct solutions: 130
+Incorrect solutions: 265
+=============================
+Total correct solutions by Dart: 180
+Round 2 Summary for meta-llama/Meta-Llama-3-70B-Instruct-Turbo:
+Total problems: 265
+Correct solutions: 72
+Incorrect solutions: 193
+=============================
+Total correct solutions by Dart: 177
+Round 192 Summary for meta-llama/Meta-Llama-3-70B-Instruct-Turbo:
+Total problems: 193
+Correct solutions: 62
+Incorrect solutions: 131
+=============================
+Total correct solutions by Dart: 187

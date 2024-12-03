@@ -1,5 +1,4 @@
 model: gpt-4o
-api_key: your_api_key
-openai_api_key: your_api_key
-
+endpoint: https://api.aimlapi.com/v1
+api_key: your_aimlapi_key
 # If the main model is from aimlapi, you should specify api_key to be aimlapi key. openai_api_key is used for cross-verification.

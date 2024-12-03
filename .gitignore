@@ -164,3 +164,7 @@ data/
 temp.ipynb
 config/
 cache/
+config/gpt-4o-mini.yaml
+config/gpt-4o.yaml
+config/llama-405b.yaml
+config/llama-70b.yaml

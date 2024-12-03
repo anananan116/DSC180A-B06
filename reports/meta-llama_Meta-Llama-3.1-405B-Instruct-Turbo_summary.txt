@@ -1,0 +1,24 @@
+Round 0 Summary for meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo:
+Total problems: 500
+Correct solutions: 107
+Incorrect solutions: 393
+=============================
+Total correct solutions by Dart: 123
+Round 1 Summary for meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo:
+Total problems: 393
+Correct solutions: 194
+Incorrect solutions: 199
+=============================
+Total correct solutions by Dart: 244
+Round 2 Summary for meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo:
+Total problems: 199
+Correct solutions: 104
+Incorrect solutions: 95
+=============================
+Total correct solutions by Dart: 262
+Round 94 Summary for meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo:
+Total problems: 95
+Correct solutions: 33
+Incorrect solutions: 62
+=============================
+Total correct solutions by Dart: 264

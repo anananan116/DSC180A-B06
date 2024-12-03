@@ -5,14 +5,14 @@ random.seed(42)
 from transformers import GenerationConfig, logging
 logging.set_verbosity_error()
 import os
-
+import copy
 import json
 import openai
 import glob
 
-from inference import setup_model_and_tokenizer, do_initial_inference, save_results, do_correction_inference, filter_fail_initial_inference
+from inference import do_initial_inference, save_results, do_correction_inference, filter_fail_initial_inference
 from data_utils import load_math_dataset
-from reflection import get_corrections, show_stats, get_corrections_from_two_models, show_stats_two_models
+from reflection import get_corrections, show_stats
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Script configuration parameters')
@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument(
         '--sample_size',
         type=int,
-        default=20,
+        default=500,
         help='Number of samples to generate'
     )
     
@@ -94,7 +94,7 @@ def parse_args():
     parser.add_argument(
         '--api_config',
         type=str,
-        default='config/gpt-4o.yaml',
+        default=['config/llama-70b.yaml', 'config/llama-405b.yaml'],
     )
     
     parser.add_argument(
@@ -115,48 +115,36 @@ def parse_args():
 def main():
     args = parse_args()
     problems = load_math_dataset(args.data_path)
-    model, tokenizer = setup_model_and_tokenizer(args.model_name, args.device)
     if not os.path.exists('cache'):
         os.makedirs('cache')
     if not os.path.exists('reports'):
         os.makedirs('reports')
-    initial_sampled_dataset = random.sample(problems, args.sample_size)
+    initial_sampled_dataset = problems[:args.sample_size]
     configs = []
     api_config = args.api_config
-    if api_config == "all":
-        all_configs = glob.glob('config/*.yaml')
-        for config in all_configs:
-            with open(config, 'r') as f:
-                configs.append(yaml.safe_load(f))
-    else:
-        with open(api_config, 'r') as f:
-            api_config = yaml.safe_load(f)
-        configs.append(api_config)
+    for config in api_config:
+        with open(config, 'r') as f:
+            configs.append(yaml.safe_load(f))
+    # if api_config == "all":
+    #     all_configs = glob.glob('config/*.yaml')
+    #     for config in all_configs:
+    #         with open(config, 'r') as f:
+    #             configs.append(yaml.safe_load(f))
+    # else:
+    #     with open(api_config, 'r') as f:
+    #         api_config = yaml.safe_load(f)
+    #     configs.append(api_config)
     
     for api_config in configs:
         sampled_problems = initial_sampled_dataset
         api_key = api_config['api_key']
         if 'endpoint' in api_config:
             client = openai.OpenAI(api_key=api_key, base_url=api_config['endpoint'])
-            client_2 = openai.OpenAI(api_key=api_config['openai_api_key'])
-            has_client_2 = True
-        elif api_config['model'] != "gpt-4o":
-            client = openai.OpenAI(api_key=api_key)
-            client_2 = openai.OpenAI(api_key=api_config['openai_api_key'])
-            has_client_2 = True
         else:
             client = openai.OpenAI(api_key=api_key)
-            has_client_2 = False
         
-        config = GenerationConfig(
-            max_tokens=args.max_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            batch_size=args.batch_size,
-            do_sample=not args.no_sample
-        )
         if not os.path.exists(args.initial_inference):
-            initial_inference_results = do_initial_inference(model, tokenizer, config, sampled_problems)
+            initial_inference_results = do_initial_inference(client = client, model = "meta-llama/Meta-Llama-3-8B-Instruct-Turbo", dataset= sampled_problems)
             save_results(initial_inference_results, args.initial_inference)
         with open(args.initial_inference) as f:
             initial_inference_results = json.load(f)
@@ -164,21 +152,24 @@ def main():
         inference_results = initial_inference_results["results"]
         inference_results, sampled_problems = filter_fail_initial_inference(inference_results, sampled_problems)
         
+        original_problems = copy.deepcopy(sampled_problems)
+        save_results(original_problems, "cache/original_problems.json")
+        currect_solutions = {i:v for i, v in enumerate(inference_results)}
+        index_map = range(len(inference_results))
+        
         for i in range(args.reflexion_iters):
-            if has_client_2:
-                corrections, corrections_2 = get_corrections_from_two_models(inference_results, client, client_2, sampled_problems, model = api_config['model'])
-                report = show_stats_two_models(corrections, corrections_2, i, api_config['model'])
-            else:
-                corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
-                report = show_stats(corrections, i, api_config['model'])
+            corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
+            report = show_stats(corrections, currect_solutions, original_problems, i, api_config['model'])
             save_results(corrections, f'cache/corrections_{i}.json')
-            corrected, problems = do_correction_inference(model, tokenizer, config, attempts=inference_results, corrections=corrections, problems=sampled_problems)
+            corrected, problems, index_map = do_correction_inference(client=client, model= api_config['model'], attempts=inference_results, corrections=corrections, problems=sampled_problems, index_map=index_map)
+            for i, v in enumerate(corrected):
+                currect_solutions[index_map[i]] = v
             save_results(corrected, f'cache/corrected_{i}.json')
             inference_results = corrected
             sampled_problems = problems
         
         corrections = get_corrections(inference_results, client, sampled_problems, model = api_config['model'])
-        show_stats(corrections, args.reflexion_iters)
+        show_stats(corrections, currect_solutions, original_problems, i, api_config['model'])
 
 if __name__ == '__main__':
     main()

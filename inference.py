@@ -8,6 +8,11 @@ from transformers import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple
 import re
+import openai
+from typing import List, Dict, Tuple, Optional
+from tqdm import tqdm
+import concurrent.futures
+
 
 logging.set_verbosity_error()
 
@@ -27,8 +32,8 @@ SYSTEM_PROMPT_INITIAL = """You are a precise mathematical problem solver. Follow
 - Even if you find an error in previous steps, continue to the end. Do not fix it and start again!
 
 3. FINAL ANSWER
-- Start with "Solution:" on a new line
-- Provide a concise answer with units if applicable
+- Start with "\\boxed{}" on a new line, putting the final answer in the brackets
+- Do not include any additional information in the final answer, inlcudding units
 - Still provide the answer even if you made a mistake in the steps, even if it's incorrect or not valid. NEVER start again!
 
 Example output:
@@ -53,7 +58,7 @@ Step 4: Solve for t
 t = ln(1.2) ÷ ln(1.05)
 t = 3.74
 
-Solution: 3.74 years"""
+\\boxed{3.74}"""
 
 SYSTEM_PROMPT_CORRECTION = """You are a precise mathematical problem solver. Follow these exact guidelines:
 
@@ -77,8 +82,8 @@ SYSTEM_PROMPT_CORRECTION = """You are a precise mathematical problem solver. Fol
 - Do not repeat the original wrong step in the corrected solution. Simply start from the corrected step.
 
 3. FINAL ANSWER
-- Start with "Solution:" on a new line
-- Provide a concise answer with units if applicable
+- Start with "\\boxed{}" on a new line, putting the final answer in the brackets
+- Do not include any additional information in the final answer, inlcudding units
 - Still provide the answer even if you made a mistake in the steps, even if it's incorrect or not valid. NEVER start again!
 - No matter what the feedback and the previous attempt is, you should always cotinue solving the problem following the given format and provide a final answer!
 
@@ -106,120 +111,8 @@ Step 4: Solve for t
 t = ln(1.2) ÷ ln(1.05)
 t = 3.74
 
-Solution: 3.74 years
+\\boxed{3.74}
 """
-
-def format_chat(
-    user_prompt: str, 
-    system_prompt: Optional[str] = None
-) -> List[Dict]:
-    """Format chat messages following the standardized chat format."""
-    messages = []
-    
-    # Add system message if provided
-    if system_prompt:
-        messages.append({
-            "role": "system",
-            "content": system_prompt
-        })
-    
-    
-    # Add the current user message
-    messages.append({
-        "role": "user",
-        "content": user_prompt
-    })
-    
-    return messages
-
-def setup_model_and_tokenizer(
-    model_name: str,
-    device: str = "cuda",
-    load_in_8bit: bool = False,
-    load_in_4bit: bool = False
-):
-    """Setup model and tokenizer with various quantization options."""
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, padding_side='left')
-    
-    # Set up loading kwargs based on quantization settings
-    model_kwargs = {
-        "device_map": "auto",
-        "trust_remote_code": True,
-        "torch_dtype": torch.float16,
-    }
-    
-    if load_in_8bit:
-        model_kwargs["load_in_8bit"] = True
-    elif load_in_4bit:
-        model_kwargs["load_in_4bit"] = True
-        
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        **model_kwargs
-    )
-    
-    if not (load_in_8bit or load_in_4bit) and device == "cuda":
-        model = model.to(device)
-    tokenizer.pad_token = tokenizer.eos_token
-    return model, tokenizer
-
-def batch_inference(
-    model: AutoModelForCausalLM,
-    tokenizer: AutoTokenizer,
-    prompts: List[Dict[str, str]],
-    config: GenerationConfig
-) -> List[Dict]:
-    """Run batched inference using transformers."""
-    
-    # Format all prompts
-    formatted_prompts = [tokenizer.apply_chat_template( 
-        format_chat(
-            p['user_prompt'],
-            p.get('system_prompt')
-        ), tokenize=False)
-        for p in prompts
-    ]
-    
-    results = []
-
-    # Process in batches
-    for i in tqdm(range(0, len(formatted_prompts), config.batch_size)):
-        batch = formatted_prompts[i:i + config.batch_size]
-        
-        # Tokenize batch
-        inputs = tokenizer(
-            batch,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=2048,  # Adjust based on model's context window
-        ).to(model.device)
-        input_len = [len(i) for i in inputs['input_ids']]
-        # Generate
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=config.max_tokens,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                pad_token_id=tokenizer.pad_token_id,
-                do_sample=config.do_sample
-            )
-        
-        # Decode and store results
-        for j, output in enumerate(outputs):
-            original_prompt = prompts[i + j]
-            generated_text = tokenizer.decode(output[input_len[j]:], skip_special_tokens=True)
-
-            results.append({
-                'user_prompt': original_prompt['user_prompt'],
-                'system_prompt': original_prompt.get('system_prompt'),
-                'generated_text': generated_text,
-                'output_ids': output.tolist(),
-                'token_count': len(output)
-            })
-    
-    return results
 
 def save_results(results: List[Dict], output_file: str):
     """Save results to a JSON file."""
@@ -243,22 +136,20 @@ def parse_solution_steps(solution_text) -> Dict:
     # Initialize lists for different parts
     steps = []
     solution = None
-    
     current_section = 'none'
     one_step = ''
     for line in lines:
-        if line.startswith('Step') or line.startswith('step'):
+        if line.replace('*', '').startswith('Step') or line.replace('*', '').startswith('step'):
             current_section = 'step'
             if one_step != '':
                 steps.append(one_step)
                 one_step = ''
-        # Check if line starts with "Solution:"
-        elif line.startswith('Solution:'):
+        # Check if line starts with "\boxed{}:"
+        elif '\\boxed{' in line:
             solution = line
             break
         if current_section == 'step':
             one_step += line + '\n'
-        
     return {
         'steps': steps,
         'solution': solution
@@ -287,53 +178,99 @@ def validate_solution_format(parsed_solution: Dict) -> Tuple[bool, str]:
         
     return True, "Valid format"
 
+def process_single_inference(args: tuple) -> Dict:
+    """Process a single inference request using the OpenAI API."""
+    problem, model, client, system_prompt, original_index = args
+    
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": problem['user_prompt']},
+            ],
+            max_tokens=4096
+        )
+        
+        return {
+            'generated_text': completion.choices[0].message.content,
+            'original_index': original_index
+        }
+    except Exception as e:
+        print(f"Error during inference: {str(e)}")
+        return {'generated_text': None, 'original_index': original_index}
+
+def batch_api_inference(
+    client: openai.OpenAI,
+    model: str,
+    prompts: List[Dict],
+    system_prompt: str,
+    max_workers: int = 128
+) -> List[Dict]:
+    """Run batch inference using concurrent API calls."""
+    # Include original index in task arguments
+    task_args = [(prompt, model, client, system_prompt, idx) for idx, prompt in enumerate(prompts)]
+    results = []
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(process_single_inference, args) for args in task_args]
+        
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(task_args)):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                # Include the original index even for failed results
+                original_idx = task_args[futures.index(future)][-1]
+                results.append({'generated_text': None, 'original_index': original_idx})
+    
+    # Sort results based on original index
+    sorted_results = sorted(results, key=lambda x: x['original_index'])
+    # Remove the original_index from final results
+    final_results = [{'generated_text': r['generated_text']} for r in sorted_results]
+    
+    return final_results
+
 def do_initial_inference(
-    model: AutoModelForCausalLM,
-    tokenizer: AutoTokenizer,
-    config: GenerationConfig,
+    client: openai.OpenAI,
+    model: str,
     dataset: List[Dict],
     max_retries: int = 3
 ) -> List[Dict]:
-    """Run initial inference with format validation and retries."""
-    # Initialize results list with None values to maintain order
+    """Run initial inference with retries using the API."""
     final_results = [None] * len(dataset)
     
-    # Process all problems in a batch
+    # Prepare prompts
     prompts = []
     for problem in dataset:
         prompts.append({
-            'system_prompt': SYSTEM_PROMPT_INITIAL,
             'user_prompt': problem['problem']
         })
     
     # Run batch inference
-    batch_results = batch_inference(model, tokenizer, prompts, config)
+    batch_results = batch_api_inference(client, model, prompts, SYSTEM_PROMPT_INITIAL)
     
-    # Process each result and handle retries if needed
+    # Process results and handle retries
     for idx, result in enumerate(batch_results):
         attempt_count = 0
         valid_result = None
         
         while attempt_count < max_retries and valid_result is None:
             if attempt_count == 0:
-                # Use the initial batch result
                 current_result = result
             else:
-                # Retry individually for invalid results
                 print(f"Retrying initial generation: problem {idx}")
+                # For retries, we need to maintain the original index
                 retry_prompt = prompts[idx]
-                current_result = batch_inference(model, tokenizer, [retry_prompt], config)[0]
+                current_result = process_single_inference((retry_prompt, model, client, SYSTEM_PROMPT_INITIAL, 0))
             
-            parsed_result = parse_solution_steps(current_result['generated_text'])
-            is_valid, error_msg = validate_solution_format(parsed_result)
-            
-            if is_valid:
+            if current_result['generated_text'] is not None:
+                parsed_result = parse_solution_steps(current_result['generated_text'])
                 valid_result = parsed_result
             else:
                 attempt_count += 1
                 if attempt_count == max_retries:
-                    print(f"Warning: Maximum retries reached for problem {idx}. Last error: {error_msg}")
-                    print(f"This row of the dataset will be dropped.")
+                    print(f"Warning: Maximum retries reached for problem {idx}")
                     valid_result = None
         
         final_results[idx] = valid_result
@@ -341,22 +278,21 @@ def do_initial_inference(
     return final_results
 
 def do_correction_inference(
-    model: AutoModelForCausalLM,
-    tokenizer: AutoTokenizer,
-    config: GenerationConfig,
+    client: openai.OpenAI,
+    model: str,
     attempts: List[Dict],
     corrections: List[Dict],
     problems: List[Dict],
+    index_map: List[int],
     max_retries: int = 3
-) -> Tuple[List[Dict], List[Dict]]:
-    """Run correction inference with format validation and retries."""
-    # Initialize results list with None for problems needing correction
-    final_results = [None] * len(problems)
+) -> Tuple[List[Dict], List[Dict], List[int]]:
+    """Run correction inference with retries using the API."""
+    # Initialize data structures to maintain order
+    correction_data = []
     final_problems = []
-    correction_indices = []
+    filtered_index = []
     
-    # Prepare prompts for problems needing correction
-    prompts = []
+    # Prepare prompts for corrections and track indices
     for idx, (attempt, correction, problem) in enumerate(zip(attempts, corrections, problems)):
         if not correction['correct']:
             user_prompt = (
@@ -366,58 +302,67 @@ def do_correction_inference(
                 f"Feedback: {correction['how_to_fix']}\n\n"
             )
             
-            prompts.append({
-                'system_prompt': SYSTEM_PROMPT_CORRECTION,
-                'user_prompt': user_prompt
+            correction_data.append({
+                'prompt': {'user_prompt': user_prompt},
+                'original_idx': idx,
+                'attempt': attempt,
+                'correction': correction,
+                'problem': problem,
+                'map_idx': index_map[idx]
             })
-            correction_indices.append(idx)
-            final_problems.append(problem)
     
-    if not prompts:  # No corrections needed
-        return [], []
+    if not correction_data:
+        return [], [], []
     
-    # Run batch inference for all corrections
-    batch_results = batch_inference(model, tokenizer, prompts, config)
+    # Extract prompts while maintaining order information
+    prompts = [item['prompt'] for item in correction_data]
     
-    # Process each result and handle retries if needed
-    for prompt_idx, (result, original_idx) in enumerate(zip(batch_results, correction_indices)):
+    # Run batch inference with tracking indices
+    batch_results = batch_api_inference(
+        client, 
+        model, 
+        prompts, 
+        SYSTEM_PROMPT_CORRECTION
+    )
+    
+    final_results = []
+    
+    # Process results and handle retries while maintaining order
+    for idx, (result, correction_item) in enumerate(zip(batch_results, correction_data)):
         attempt_count = 0
         valid_result = None
         
         while attempt_count < max_retries and valid_result is None:
             if attempt_count == 0:
-                # Use the initial batch result
                 current_result = result
             else:
-                # Retry individually for invalid results
-                print(f"Retrying correction: {prompt_idx} (original problem {original_idx})")
-                retry_prompt = prompts[prompt_idx]
-                current_result = batch_inference(model, tokenizer, [retry_prompt], config)[0]
+                print(f"Retrying correction: {idx} (original problem {correction_item['original_idx']})")
+                current_result = process_single_inference((correction_item['prompt'], model, client, SYSTEM_PROMPT_CORRECTION, 0))
             
-            parsed_result = parse_solution_steps(current_result['generated_text'])
-            is_valid, error_msg = validate_solution_format(parsed_result)
-            
-            if is_valid:
+            if current_result['generated_text'] is not None:
+                parsed_result = parse_solution_steps(current_result['generated_text'])
                 # Combine previous steps with new ones
                 parsed_result['steps'] = (
-                    attempts[original_idx]['steps'][:corrections[original_idx]['error_step'] - 1] + 
+                    correction_item['attempt']['steps'][:correction_item['correction']['error_step'] - 1] + 
                     parsed_result['steps']
                 )
                 valid_result = parsed_result
             else:
                 attempt_count += 1
                 if attempt_count == max_retries:
-                    print(f"Warning: Maximum retries reached for correction {prompt_idx} (original problem {original_idx}). Last error: {error_msg}")
+                    print(f"Warning: Maximum retries reached for correction {idx} (original problem {correction_item['original_idx']})")
                     # Combine steps even for invalid results
-                    parsed_result['steps'] = attempts[original_idx]['steps'][:corrections[original_idx]['error_step']]
+                    parsed_result = {
+                        'steps': correction_item['attempt']['steps'][:correction_item['correction']['error_step']]
+                    }
                     valid_result = parsed_result
         
-        final_results[original_idx] = valid_result
+        if valid_result is not None:
+            final_results.append(valid_result)
+            final_problems.append(correction_item['problem'])
+            filtered_index.append(correction_item['map_idx'])
     
-    # Filter out None values from final results (problems that didn't need correction)
-    final_results = [result for result in final_results if result is not None]
-    
-    return final_results, final_problems
+    return final_results, final_problems, filtered_index
 
 def filter_fail_initial_inference(results: List[Dict], problems: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     """Filter out failed initial inference results."""
