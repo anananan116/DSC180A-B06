@@ -1,5 +1,7 @@
 # DSC180A-B06
 
+Reflection Based Reasoning Improvements to LLM Process Reward Modeling. Preceeding work to our Winter 2025 project, [Multi-Modal Reasoners](https://github.com/Lancelot39/mm-reasoners)
+
 # Requirements
 - Conda 
 - Python >=3.10
