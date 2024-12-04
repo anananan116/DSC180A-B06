@@ -7,7 +7,7 @@
 
 # Setup (Local Development)
 
-Setup the Conda Environment
+Navigate to the root directory, then setup the Conda Environment
 ```bash
 $ conda env create -f environment.yml
 ```
